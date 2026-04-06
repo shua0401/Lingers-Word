@@ -1,5 +1,7 @@
 # GitHub Pages へ静的デプロイ（リポジトリ直下 = サイトルート）
-# リポジトリ Settings → Pages → Build and deployment で Source を「GitHub Actions」にしてください。
+# Repo: https://github.com/shua0401/Lingers-Word
+# 公開後の例: https://shua0401.github.io/Lingers-Word/
+# Settings → Pages → Build and deployment で Source を「GitHub Actions」にしてください。
 
 name: Deploy to GitHub Pages
 
