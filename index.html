@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#1a1a2e" />
+  <title>Lingers Word — 間隔反復単語帳</title>
+  <link rel="stylesheet" href="css/app.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="top">
+      <h1 class="logo">Lingers Word</h1>
+      <div class="top-stats">
+        <span class="pill" id="xpPill" title="経験値・レベル">XP <strong id="xpVal">0</strong></span>
+        <span class="pill streak" id="streakPill" title="連続日数">🔥 <strong id="streakVal">0</strong></span>
+      </div>
+    </header>
+
+    <nav class="mode-nav">
+      <button type="button" class="mode-btn active" id="btnModeWord" aria-pressed="true">単語を暗記</button>
+      <button type="button" class="mode-btn" id="btnModeSentence" aria-pressed="false">英文を暗記</button>
+    </nav>
+
+    <section class="session-panel" id="sessionPanel">
+      <div class="phase-row">
+        <span class="phase-badge" id="phaseBadge">英 → 日</span>
+        <span class="session-meta" id="sessionMeta"></span>
+      </div>
+      <div class="card" id="card">
+        <p class="card-label" id="cardLabel">問題</p>
+        <p class="card-text" id="cardText">データを読み込んでください</p>
+        <p class="card-sub hint" id="cardHint" hidden></p>
+      </div>
+      <form class="answer-form" id="answerForm" autocomplete="off">
+        <input
+          type="text"
+          id="answerInput"
+          class="answer-input"
+          lang="ja"
+          enterkeyhint="done"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
+          placeholder="答えを入力して Enter"
+        />
+        <div class="form-actions">
+          <button type="submit" class="btn primary" id="btnSubmit">判定</button>
+          <button type="button" class="btn ghost" id="btnShowHint">ヒント</button>
+        </div>
+      </form>
+      <div class="feedback hidden" id="feedback" role="status">
+        <div class="feedback-main" id="feedbackMain"></div>
+        <div class="feedback-your" id="feedbackYour"></div>
+      </div>
+      <div class="progress-dots" id="progressDots" aria-hidden="true"></div>
+    </section>
+
+    <section class="calendar-panel">
+      <h2 class="panel-title">習慣カレンダー</h2>
+      <p class="panel-desc">1日 <strong>5問以上</strong> で丸。忘却曲線どおり復習が並びます。過去・未来の月も切り替えて表示できます。</p>
+      <div class="cal-toolbar">
+        <button type="button" class="cal-nav-btn" id="btnCalPrev" aria-label="前の月">‹</button>
+        <h3 class="cal-month-label" id="calMonthLabel"></h3>
+        <button type="button" class="cal-nav-btn" id="btnCalNext" aria-label="次の月">›</button>
+        <button type="button" class="btn small cal-today-btn" id="btnCalToday">今月</button>
+      </div>
+      <div class="calendar" id="calendar"></div>
+    </section>
+
+    <footer class="foot">
+      <p class="foot-note">
+        既定で
+        <a href="https://docs.google.com/spreadsheets/d/1r9_TB-w8X1A2I0WrVjvlY3eX4epyr_ceS1ke_AwenUs/edit?usp=sharing" target="_blank" rel="noopener">英会話シート</a>
+        から都度取得します（共有は「リンクを知っている全員が<strong>閲覧</strong>可」）。1行目は
+        <code>No.,英語,日本語,単語説明,英文,日本文,文説明</code>（英文は必須・単語列と説明は空欄可）。
+        別シートにする場合だけ下にURLまたはIDを保存してください。
+      </p>
+      <div class="csv-config">
+        <input
+          type="text"
+          id="csvUrlInput"
+          class="url-input"
+          placeholder="空欄で既定シート／または編集用の共有URLを貼り付け"
+        />
+        <div class="csv-config-row">
+          <button type="button" class="btn small" id="btnReloadData">いま最新を取得</button>
+          <button type="button" class="btn small" id="btnSaveUrl">別シートで保存</button>
+        </div>
+      </div>
+      <button type="button" class="btn linkish" id="btnDownloadTemplate">単語CSVひな形をダウンロード</button>
+
+      <p class="foot-note backup-intro">
+        公開したURLや別の端末ではブラウザの保存領域が変わります。<strong>学習記録（カレンダー・XP・復習間隔）は JSON に書き出しておくと完全に引き継げます。</strong>表だけ残したいときは CSV も使えます。
+      </p>
+      <div class="csv-config-row backup-row">
+        <button type="button" class="btn small" id="btnExportJson">学習データを書き出し（JSON）</button>
+        <button type="button" class="btn small" id="btnImportJson">学習データを読み込み（JSON）</button>
+        <input type="file" id="importJsonInput" class="hidden" accept="application/json,.json" />
+      </div>
+      <div class="csv-config-row backup-row">
+        <button type="button" class="btn small" id="btnExportHabitCsv">習慣カレンダーをCSV（スプレッドシート用）</button>
+      </div>
+    </footer>
+  </div>
+
+  <div class="toast-layer" id="toastLayer" aria-live="polite"></div>
+  <div class="modal hidden" id="celebrateModal" role="dialog" aria-modal="true" aria-labelledby="celebrateTitle">
+    <div class="modal-box">
+      <h2 id="celebrateTitle">お知らせ</h2>
+      <p id="celebrateBody"></p>
+      <button type="button" class="btn primary" id="celebrateOk">OK</button>
+    </div>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
