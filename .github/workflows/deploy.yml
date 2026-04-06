@@ -1,7 +1,11 @@
 # GitHub Pages へ静的デプロイ（リポジトリ直下 = サイトルート）
 # Repo: https://github.com/shua0401/Lingers-Word
 # 公開後の例: https://shua0401.github.io/Lingers-Word/
-# Settings → Pages → Build and deployment で Source を「GitHub Actions」にしてください。
+#
+# 【初回だけ必須】「Configure Pages」が Not Found で落ちるとき:
+# 1. リポジトリの Settings → Pages を開く
+# 2. Build and deployment の Source で「GitHub Actions」を選ぶ（ブランチではない）
+# 3. Actions タブからワークフローを「Re-run」する
 
 name: Deploy to GitHub Pages
 
