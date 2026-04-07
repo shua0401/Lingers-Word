@@ -7,6 +7,11 @@ const LS = "lingers_word_v1";
 /** メインと同内容のミラー（書き込み事故時の復旧用）。カレンダー・XP・SRS すべて含む */
 const LS_BACKUP = "lingers_word_v1_backup";
 const LS_URL = "lingers_word_csv_url";
+const LS_SYNC_URL = "lingers_word_supabase_url";
+const LS_SYNC_KEY = "lingers_word_supabase_anon";
+const LS_SYNC_ON = "lingers_word_sync_on";
+const CLOUD_TABLE = "lingers_word_cloud";
+const CLOUD_ROW_ID = "me";
 
 /** 「英会話」既定シート。入力欄が空のときもここから毎回取得します */
 const DEFAULT_SHEET_ID = "1r9_TB-w8X1A2I0WrVjvlY3eX4epyr_ceS1ke_AwenUs";
@@ -122,7 +127,108 @@ function loadPersisted() {
   return empty;
 }
 
-function savePersisted(data) {
+function cloneData(/** @type {unknown} */ x) {
+  try {
+    return JSON.parse(JSON.stringify(x));
+  } catch {
+    return x;
+  }
+}
+
+function mergeHabits(/** @type {Record<string, { count?: number, marked?: boolean }>} */ h1, h2) {
+  const out = /** @type {Record<string, { count: number, marked: boolean }>} */ ({});
+  const keys = new Set([...Object.keys(h1 || {}), ...Object.keys(h2 || {})]);
+  for (const k of keys) {
+    const a = h1[k] || { count: 0, marked: false };
+    const b = h2[k] || { count: 0, marked: false };
+    out[k] = {
+      count: Math.max(Number(a.count) || 0, Number(b.count) || 0),
+      marked: !!(a.marked || b.marked),
+    };
+  }
+  return out;
+}
+
+/** PC/スマホなど別端末のデータをまとめる（丸は両方の max、SRSは新しい方のスナップショット、XPは max） */
+function mergePersistCrossDevice(
+  /** @type {{ srs?: object, habit?: object, meta?: { xp?: number, syncAt?: number } }} */ local,
+  remote
+) {
+  const tLocal = local.meta?.syncAt || 0;
+  const tRemote = remote.meta?.syncAt || 0;
+  const srs = tLocal >= tRemote ? cloneData(local.srs) : cloneData(remote.srs);
+  const habit = mergeHabits(local.habit || {}, remote.habit || {});
+  const xp = Math.max(local.meta?.xp || 0, remote.meta?.xp || 0);
+  return {
+    srs: srs || {},
+    habit,
+    meta: { xp, syncAt: Date.now() },
+  };
+}
+
+function supaHeaders() {
+  const key = localStorage.getItem(LS_SYNC_KEY)?.trim() || "";
+  return {
+    apikey: key,
+    Authorization: `Bearer ${key}`,
+    "Content-Type": "application/json",
+  };
+}
+
+/** クラウドの学習データ。undefined=通信/HTTP失敗、null=まだ行がない、object=中身 */
+async function fetchCloudPersist() {
+  const base = localStorage.getItem(LS_SYNC_URL)?.replace(/\/$/, "").trim();
+  const key = localStorage.getItem(LS_SYNC_KEY)?.trim();
+  if (!base || !key) return undefined;
+  const url = `${base}/rest/v1/${CLOUD_TABLE}?id=eq.${encodeURIComponent(CLOUD_ROW_ID)}&select=body`;
+  const res = await fetch(url, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+  if (!res.ok) return undefined;
+  const rows = await res.json();
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  const body = rows[0].body;
+  if (typeof body === "string") {
+    try {
+      return JSON.parse(body);
+    } catch {
+      return null;
+    }
+  }
+  return body && typeof body === "object" ? body : null;
+}
+
+async function upsertCloudPersist(/** @type {{ srs: object, habit: object, meta: object }} */ payload) {
+  const base = localStorage.getItem(LS_SYNC_URL)?.replace(/\/$/, "").trim();
+  const key = localStorage.getItem(LS_SYNC_KEY)?.trim();
+  if (!base || !key) return false;
+  const row = { id: CLOUD_ROW_ID, body: payload };
+  const res = await fetch(`${base}/rest/v1/${CLOUD_TABLE}`, {
+    method: "POST",
+    headers: { ...supaHeaders(), Prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify([row]),
+  });
+  return res.ok;
+}
+
+let cloudPushTimer = 0;
+function queueCloudPush(/** @type {{ srs: object, habit: object, meta: object }} */ data) {
+  if (localStorage.getItem(LS_SYNC_ON) !== "1") return;
+  window.clearTimeout(cloudPushTimer);
+  cloudPushTimer = window.setTimeout(async () => {
+    try {
+      await upsertCloudPersist(cloneData(data));
+    } catch {
+      /* オフライン時などは静かに失敗。設定確認は「設定を保存して取り込み」で。 */
+    }
+  }, 800);
+}
+
+/**
+ * @param {{ srs: object, habit: object, meta: object }} data
+ * @param {{ skipCloud?: boolean, skipSyncBump?: boolean }} [opts]
+ */
+function savePersisted(data, opts = {}) {
+  data.meta = data.meta || {};
+  if (!opts.skipSyncBump) data.meta.syncAt = Date.now();
   const s = JSON.stringify(data);
   try {
     localStorage.setItem(LS, s);
@@ -134,6 +240,30 @@ function savePersisted(data) {
       /* 容量不足など */
     }
   }
+  if (!opts.skipCloud && localStorage.getItem(LS_SYNC_ON) === "1") {
+    queueCloudPush(JSON.parse(s));
+  }
+}
+
+async function syncPullMerge() {
+  if (localStorage.getItem(LS_SYNC_ON) !== "1") return;
+  let remote;
+  try {
+    remote = await fetchCloudPersist();
+  } catch {
+    return;
+  }
+  if (remote === undefined) return;
+  if (remote === null) {
+    await upsertCloudPersist(persist);
+    return;
+  }
+  if (typeof remote.habit !== "object") return;
+  const merged = mergePersistCrossDevice(persist, remote);
+  persist = merged;
+  savePersisted(persist, { skipCloud: true });
+  const ok = await upsertCloudPersist(persist);
+  if (!ok) toast("クラウドへのマージ反映に失敗（Project URL・キー・SQL を確認）");
 }
 
 function parseCSV(text) {
@@ -981,6 +1111,8 @@ async function loadData(opts = {}) {
       if (text) sourceLabel = "data/words.csv";
     } catch {
       entries = [];
+      persist = loadPersisted();
+      await syncPullMerge();
       showCurrent();
       renderCalendar();
       toast(
@@ -993,6 +1125,7 @@ async function loadData(opts = {}) {
   const rows = parseCSV(text);
   entries = rowsToEntries(rows);
   persist = loadPersisted();
+  await syncPullMerge();
   elXpVal.textContent = xpDisplay(persist.meta.xp);
   elStreakVal.textContent = String(consecutiveStreak(persist.habit, todayYMD()));
   showCurrent({ focusInput: !silent });
@@ -1096,6 +1229,25 @@ $("#btnExportHabitCsv").addEventListener("click", exportHabitCsv);
 
 const elImportJsonInput = $("#importJsonInput");
 $("#btnImportJson").addEventListener("click", () => elImportJsonInput.click());
+function fillSyncForm() {
+  $("#supabaseUrlInput").value = localStorage.getItem(LS_SYNC_URL) || "";
+  $("#supabaseKeyInput").value = localStorage.getItem(LS_SYNC_KEY) || "";
+  $("#syncEnabledInput").checked = localStorage.getItem(LS_SYNC_ON) === "1";
+}
+
+$("#btnSaveSync").addEventListener("click", async () => {
+  localStorage.setItem(LS_SYNC_URL, $("#supabaseUrlInput").value.trim());
+  localStorage.setItem(LS_SYNC_KEY, $("#supabaseKeyInput").value.trim());
+  localStorage.setItem(LS_SYNC_ON, $("#syncEnabledInput").checked ? "1" : "0");
+  persist = loadPersisted();
+  await syncPullMerge();
+  elXpVal.textContent = xpDisplay(persist.meta.xp);
+  elStreakVal.textContent = String(consecutiveStreak(persist.habit, todayYMD()));
+  renderCalendar();
+  showCurrent({ focusInput: false });
+  toast("同期設定を保存しました");
+});
+
 elImportJsonInput.addEventListener("change", async (ev) => {
   const input = ev.target;
   const f = input.files?.[0];
@@ -1125,4 +1277,5 @@ elImportJsonInput.addEventListener("change", async (ev) => {
 elXpVal.textContent = xpDisplay(persist.meta.xp);
 elStreakVal.textContent = String(consecutiveStreak(persist.habit, todayYMD()));
 renderCalendar();
+fillSyncForm();
 loadData();

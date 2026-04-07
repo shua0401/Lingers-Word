@@ -90,8 +90,38 @@
       </div>
       <button type="button" class="btn linkish" id="btnDownloadTemplate">単語CSVひな形をダウンロード</button>
 
+      <details class="cloud-sync details-block">
+        <summary class="cloud-sync-summary">スマホとPCでカレンダー・復習を共有（Supabase）</summary>
+        <p class="foot-note">
+          ブラウザの保存は端末ごとに別です。<a href="https://supabase.com" target="_blank" rel="noopener">Supabase</a>（無料）でプロジェクトを作り、
+          <code>supabase/setup.sql</code> を SQL エディタで実行 → <strong>Project URL</strong> と <strong>anon public</strong> キーを下に貼り、「同期をオン」にすると、どの端末から開いても同じ丸・進捗が揃います。
+        </p>
+        <div class="csv-config">
+          <input
+            type="url"
+            id="supabaseUrlInput"
+            class="url-input"
+            placeholder="https://xxxx.supabase.co"
+          />
+          <input
+            type="password"
+            id="supabaseKeyInput"
+            class="url-input"
+            placeholder="anon public キー（Settings → API）"
+            autocomplete="off"
+          />
+          <label class="sync-check">
+            <input type="checkbox" id="syncEnabledInput" />
+            クラウドと同期する（保存・起動時に自動）
+          </label>
+          <div class="csv-config-row">
+            <button type="button" class="btn small" id="btnSaveSync">設定を保存してクラウドと取り込み</button>
+          </div>
+        </div>
+      </details>
+
       <p class="foot-note backup-intro">
-        公開したURLや別の端末ではブラウザの保存領域が変わります。<strong>学習記録（カレンダー・XP・復習間隔）は JSON に書き出しておくと完全に引き継げます。</strong>表だけ残したいときは CSV も使えます。
+        同期を使わない場合: <strong>学習記録は JSON に書き出し</strong>で別端末へ。表だけは CSV でも保存できます。
       </p>
       <div class="csv-config-row backup-row">
         <button type="button" class="btn small" id="btnExportJson">学習データを書き出し（JSON）</button>
