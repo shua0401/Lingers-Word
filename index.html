@@ -94,7 +94,7 @@
         <summary class="cloud-sync-summary">スマホとPCでカレンダー・復習を共有（Supabase）</summary>
         <p class="foot-note">
           ブラウザの保存は端末ごとに別です。<a href="https://supabase.com" target="_blank" rel="noopener">Supabase</a>（無料）でプロジェクトを作り、
-          <code>supabase/setup.sql</code> を SQL エディタで実行 → 同じページの <strong>Project URL</strong> と <strong>Publishable key</strong>（旧ダッシュボードでは anon public）を下に貼り、「同期をオン」にすると、どの端末から開いても同じ丸・進捗が揃います。Secret key は使いません。
+          <code>supabase/setup.sql</code> を SQL エディタで実行 → 同じページの <strong>Project URL</strong> と <strong>Publishable key</strong>（旧ダッシュボードでは anon public）を下に貼り、「同期をオン」にすると、どの端末から開いても同じ丸・進捗が揃います。          Secret key は使いません。スマホだけ 401 になるときは、キー欄に<strong>パスワード自動入力が入っていないか</strong>確認し、Supabase の画面からコピーし直して保存してください（PC とブラウザの保存は別です）。
         </p>
         <div class="csv-config">
           <input
@@ -102,6 +102,9 @@
             id="supabaseUrlInput"
             class="url-input"
             placeholder="https://xxxx.supabase.co"
+            autocapitalize="none"
+            autocorrect="off"
+            spellcheck="false"
           />
           <input
             type="password"
@@ -109,6 +112,11 @@
             class="url-input"
             placeholder="Publishable key（Settings → API）"
             autocomplete="off"
+            autocapitalize="none"
+            autocorrect="off"
+            spellcheck="false"
+            readonly
+            onfocus="this.removeAttribute('readonly')"
           />
           <label class="sync-check">
             <input type="checkbox" id="syncEnabledInput" />

@@ -14,6 +14,28 @@ const LS_SYNC_LAST_OK = "lingers_word_sync_last_ok";
 const CLOUD_TABLE = "lingers_word_cloud";
 const CLOUD_ROW_ID = "me";
 
+/** スマホの貼り付けで混ざりやすいゼロ幅・NBSPなどを除く（401 の主因になりやすい） */
+function sanitizeSupabaseKey(raw) {
+  if (raw == null || typeof raw !== "string") return "";
+  return raw
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/\u00A0/g, " ")
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .split(/\r?\n/)
+    .join("")
+    .trim();
+}
+
+function sanitizeSupabaseUrl(raw) {
+  if (raw == null || typeof raw !== "string") return "";
+  return raw
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/\u00A0/g, " ")
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\s+/g, "");
+}
+
 /** 「英会話」既定シート。入力欄が空のときもここから毎回取得します */
 const DEFAULT_SHEET_ID = "1r9_TB-w8X1A2I0WrVjvlY3eX4epyr_ceS1ke_AwenUs";
 
@@ -168,7 +190,7 @@ function mergePersistCrossDevice(
 }
 
 function supaHeaders() {
-  const key = localStorage.getItem(LS_SYNC_KEY)?.trim() || "";
+  const key = sanitizeSupabaseKey(localStorage.getItem(LS_SYNC_KEY) || "");
   return {
     apikey: key,
     Authorization: `Bearer ${key}`,
@@ -178,8 +200,8 @@ function supaHeaders() {
 
 /** クラウドの学習データ。undefined=通信/HTTP失敗、null=まだ行がない、object=中身 */
 async function fetchCloudPersist() {
-  const base = localStorage.getItem(LS_SYNC_URL)?.replace(/\/$/, "").trim();
-  const key = localStorage.getItem(LS_SYNC_KEY)?.trim();
+  const base = sanitizeSupabaseUrl(localStorage.getItem(LS_SYNC_URL) || "");
+  const key = sanitizeSupabaseKey(localStorage.getItem(LS_SYNC_KEY) || "");
   if (!base || !key) return undefined;
   const url = `${base}/rest/v1/${CLOUD_TABLE}?id=eq.${encodeURIComponent(CLOUD_ROW_ID)}&select=body`;
   const res = await fetch(url, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
@@ -216,8 +238,8 @@ function updateSyncStatusLine() {
 }
 
 async function upsertCloudPersist(/** @type {{ srs: object, habit: object, meta: object }} */ payload) {
-  const base = localStorage.getItem(LS_SYNC_URL)?.replace(/\/$/, "").trim();
-  const key = localStorage.getItem(LS_SYNC_KEY)?.trim();
+  const base = sanitizeSupabaseUrl(localStorage.getItem(LS_SYNC_URL) || "");
+  const key = sanitizeSupabaseKey(localStorage.getItem(LS_SYNC_KEY) || "");
   if (!base || !key) return false;
   const row = { id: CLOUD_ROW_ID, body: payload };
   const res = await fetch(`${base}/rest/v1/${CLOUD_TABLE}`, {
@@ -245,10 +267,12 @@ function queueCloudPush(/** @type {{ srs: object, habit: object, meta: object }}
 /** 今の設定で Supabase に届くか調べる（読み取り） */
 async function testCloudSync() {
   const on = localStorage.getItem(LS_SYNC_ON) === "1";
-  const base = ($("#supabaseUrlInput")?.value || localStorage.getItem(LS_SYNC_URL) || "")
-    .trim()
-    .replace(/\/$/, "");
-  const key = ($("#supabaseKeyInput")?.value || localStorage.getItem(LS_SYNC_KEY) || "").trim();
+  const base = sanitizeSupabaseUrl(
+    $("#supabaseUrlInput")?.value || localStorage.getItem(LS_SYNC_URL) || ""
+  );
+  const key = sanitizeSupabaseKey(
+    $("#supabaseKeyInput")?.value || localStorage.getItem(LS_SYNC_KEY) || ""
+  );
   if (!on) {
     toast("「クラウドと同期する」にチェックを入れ、「設定を保存してクラウドと取り込み」を押してください。");
     return;
@@ -1303,8 +1327,14 @@ $("#btnExportHabitCsv").addEventListener("click", exportHabitCsv);
 const elImportJsonInput = $("#importJsonInput");
 $("#btnImportJson").addEventListener("click", () => elImportJsonInput.click());
 function fillSyncForm() {
-  $("#supabaseUrlInput").value = localStorage.getItem(LS_SYNC_URL) || "";
-  $("#supabaseKeyInput").value = localStorage.getItem(LS_SYNC_KEY) || "";
+  const rawU = localStorage.getItem(LS_SYNC_URL) || "";
+  const rawK = localStorage.getItem(LS_SYNC_KEY) || "";
+  const url = sanitizeSupabaseUrl(rawU);
+  const key = sanitizeSupabaseKey(rawK);
+  if (rawU) localStorage.setItem(LS_SYNC_URL, url);
+  if (rawK) localStorage.setItem(LS_SYNC_KEY, key);
+  $("#supabaseUrlInput").value = url;
+  $("#supabaseKeyInput").value = key;
   $("#syncEnabledInput").checked = localStorage.getItem(LS_SYNC_ON) === "1";
   updateSyncStatusLine();
 }
@@ -1314,8 +1344,12 @@ $("#btnTestSync").addEventListener("click", () => {
 });
 
 $("#btnSaveSync").addEventListener("click", async () => {
-  localStorage.setItem(LS_SYNC_URL, $("#supabaseUrlInput").value.trim());
-  localStorage.setItem(LS_SYNC_KEY, $("#supabaseKeyInput").value.trim());
+  const url = sanitizeSupabaseUrl($("#supabaseUrlInput").value);
+  const key = sanitizeSupabaseKey($("#supabaseKeyInput").value);
+  localStorage.setItem(LS_SYNC_URL, url);
+  localStorage.setItem(LS_SYNC_KEY, key);
+  $("#supabaseUrlInput").value = url;
+  $("#supabaseKeyInput").value = key;
   localStorage.setItem(LS_SYNC_ON, $("#syncEnabledInput").checked ? "1" : "0");
   persist = loadPersisted();
   await syncPullMerge();
