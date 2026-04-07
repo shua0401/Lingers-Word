@@ -490,6 +490,13 @@ body {
   margin: 0.35rem 0;
 }
 
+.sync-status {
+  margin: 0.5rem 0 0;
+  font-size: 0.88rem;
+  color: #8fdfb4;
+  line-height: 1.4;
+}
+
 .backup-intro {
   margin-top: 1.25rem;
   padding-top: 1rem;

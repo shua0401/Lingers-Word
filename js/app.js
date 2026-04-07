@@ -10,6 +10,7 @@ const LS_URL = "lingers_word_csv_url";
 const LS_SYNC_URL = "lingers_word_supabase_url";
 const LS_SYNC_KEY = "lingers_word_supabase_anon";
 const LS_SYNC_ON = "lingers_word_sync_on";
+const LS_SYNC_LAST_OK = "lingers_word_sync_last_ok";
 const CLOUD_TABLE = "lingers_word_cloud";
 const CLOUD_ROW_ID = "me";
 
@@ -196,6 +197,24 @@ async function fetchCloudPersist() {
   return body && typeof body === "object" ? body : null;
 }
 
+function recordSyncSuccess() {
+  localStorage.setItem(LS_SYNC_LAST_OK, new Date().toISOString());
+  updateSyncStatusLine();
+}
+
+function updateSyncStatusLine() {
+  const el = document.getElementById("syncStatusLine");
+  if (!el) return;
+  const raw = localStorage.getItem(LS_SYNC_LAST_OK);
+  if (!raw) {
+    el.textContent =
+      "最終クラウド通信: まだ記録なし →「接続・同期を確認」で Supabase に届いているか試せます。";
+    return;
+  }
+  const d = new Date(raw);
+  el.textContent = `最終クラウド通信: ${d.toLocaleString("ja-JP")} （この時刻以降に保存・同期が成功しています）`;
+}
+
 async function upsertCloudPersist(/** @type {{ srs: object, habit: object, meta: object }} */ payload) {
   const base = localStorage.getItem(LS_SYNC_URL)?.replace(/\/$/, "").trim();
   const key = localStorage.getItem(LS_SYNC_KEY)?.trim();
@@ -206,6 +225,7 @@ async function upsertCloudPersist(/** @type {{ srs: object, habit: object, meta:
     headers: { ...supaHeaders(), Prefer: "resolution=merge-duplicates" },
     body: JSON.stringify([row]),
   });
+  if (res.ok) recordSyncSuccess();
   return res.ok;
 }
 
@@ -217,9 +237,62 @@ function queueCloudPush(/** @type {{ srs: object, habit: object, meta: object }}
     try {
       await upsertCloudPersist(cloneData(data));
     } catch {
-      /* オフライン時などは静かに失敗。設定確認は「設定を保存して取り込み」で。 */
+      /* オフライン時などは静かに失敗。「接続・同期を確認」で調べられます。 */
     }
   }, 800);
+}
+
+/** 今の設定で Supabase に届くか調べる（読み取り） */
+async function testCloudSync() {
+  const on = localStorage.getItem(LS_SYNC_ON) === "1";
+  const base = ($("#supabaseUrlInput")?.value || localStorage.getItem(LS_SYNC_URL) || "")
+    .trim()
+    .replace(/\/$/, "");
+  const key = ($("#supabaseKeyInput")?.value || localStorage.getItem(LS_SYNC_KEY) || "").trim();
+  if (!on) {
+    toast("「クラウドと同期する」にチェックを入れ、「設定を保存してクラウドと取り込み」を押してください。");
+    return;
+  }
+  if (!base || !key) {
+    toast("Project URL と anon キーを入れてから保存してください。");
+    return;
+  }
+  const url = `${base}/rest/v1/${CLOUD_TABLE}?id=eq.${encodeURIComponent(CLOUD_ROW_ID)}&select=body`;
+  try {
+    const res = await fetch(url, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+    if (!res.ok) {
+      let hint = "";
+      try {
+        const errJson = await res.json();
+        if (errJson?.message) hint = ` — ${String(errJson.message).slice(0, 120)}`;
+      } catch {
+        /* ignore */
+      }
+      toast(`接続失敗（HTTP ${res.status}）。setup.sql でテーブル作成・URL・anon キーを確認${hint}`);
+      return;
+    }
+    const rows = await res.json();
+    recordSyncSuccess();
+    if (!Array.isArray(rows)) {
+      toast("接続はできましたが応答の形が想定外です。");
+      return;
+    }
+    if (rows.length === 0) {
+      toast(
+        "接続OK。クラウドにまだ行がありません。練習して保存するか「設定を保存～」でこの端末のデータを上げます。"
+      );
+      return;
+    }
+    const body = rows[0].body;
+    const habit = body && typeof body.habit === "object" ? body.habit : {};
+    const nDays = Object.keys(habit).length;
+    const xp = body?.meta?.xp;
+    toast(
+      `接続OK。クラウドにデータあり（習慣記録の日: ${nDays} 日分${xp != null ? `、XP ${xp}` : ""}）。他端末でも同じキーで見えます。`
+    );
+  } catch {
+    toast("接続失敗（ネットワーク等）。URL が https://…supabase.co か確認してください。");
+  }
 }
 
 /**
@@ -1233,7 +1306,12 @@ function fillSyncForm() {
   $("#supabaseUrlInput").value = localStorage.getItem(LS_SYNC_URL) || "";
   $("#supabaseKeyInput").value = localStorage.getItem(LS_SYNC_KEY) || "";
   $("#syncEnabledInput").checked = localStorage.getItem(LS_SYNC_ON) === "1";
+  updateSyncStatusLine();
 }
+
+$("#btnTestSync").addEventListener("click", () => {
+  testCloudSync();
+});
 
 $("#btnSaveSync").addEventListener("click", async () => {
   localStorage.setItem(LS_SYNC_URL, $("#supabaseUrlInput").value.trim());
