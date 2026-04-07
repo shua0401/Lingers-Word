@@ -254,7 +254,7 @@ async function testCloudSync() {
     return;
   }
   if (!base || !key) {
-    toast("Project URL と anon キーを入れてから保存してください。");
+    toast("Project URL と API キー（Publishable / anon）を入れてから保存してください。");
     return;
   }
   const url = `${base}/rest/v1/${CLOUD_TABLE}?id=eq.${encodeURIComponent(CLOUD_ROW_ID)}&select=body`;
@@ -268,7 +268,7 @@ async function testCloudSync() {
       } catch {
         /* ignore */
       }
-      toast(`接続失敗（HTTP ${res.status}）。setup.sql でテーブル作成・URL・anon キーを確認${hint}`);
+      toast(`接続失敗（HTTP ${res.status}）。setup.sql でテーブル作成・URL・Publishable キーを確認${hint}`);
       return;
     }
     const rows = await res.json();
