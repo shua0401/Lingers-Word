@@ -42,16 +42,17 @@
           autocapitalize="off"
           autocorrect="off"
           spellcheck="false"
-          placeholder="答えを入力して Enter"
+          placeholder="答えを入力 → 判定 → 次の問題"
         />
         <div class="form-actions">
           <button type="submit" class="btn primary" id="btnSubmit">判定</button>
+          <button type="button" class="btn primary hidden" id="btnNextQuestion">次の問題</button>
           <button type="button" class="btn ghost" id="btnShowHint">ヒント</button>
         </div>
       </form>
       <div class="feedback hidden" id="feedback" role="status">
         <div class="feedback-main" id="feedbackMain"></div>
-        <div class="feedback-your" id="feedbackYour"></div>
+        <div class="feedback-model hidden" id="feedbackModel"></div>
       </div>
       <div class="progress-dots" id="progressDots" aria-hidden="true"></div>
     </section>

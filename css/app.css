@@ -278,12 +278,6 @@ body {
   color: var(--ok);
 }
 
-.feedback.ok-soft {
-  background: rgba(255, 196, 77, 0.14);
-  color: #ffd287;
-  border: 1px solid rgba(255, 196, 77, 0.35);
-}
-
 .feedback.bad {
   background: rgba(255, 107, 138, 0.12);
   color: var(--danger);
@@ -297,22 +291,15 @@ body {
   font-weight: 700;
 }
 
-.feedback-your {
-  margin-top: 0.55rem;
-  padding-top: 0.55rem;
+.feedback-model {
+  margin-top: 0.5rem;
+  padding-top: 0.45rem;
   border-top: 1px solid rgba(255, 255, 255, 0.12);
-  font-size: 1rem;
+  font-size: 0.98rem;
   font-weight: 600;
-  line-height: 1.35;
+  line-height: 1.4;
   word-break: break-word;
-}
-
-.feedback.ok-soft .feedback-your {
-  border-top-color: rgba(255, 196, 77, 0.25);
-}
-
-.feedback.bad .feedback-your {
-  border-top-color: rgba(255, 107, 138, 0.25);
+  opacity: 0.92;
 }
 
 .progress-dots {

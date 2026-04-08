@@ -493,6 +493,96 @@ function normalizeEnglishAnswerForMatch(s) {
   return normalizeAnswer(s, true).replace(/[.．]+$/u, "");
 }
 
+/** 英文の「だいたい一致」判定用（句読点・空白・記号を除いて比較） */
+function stripEnCompare(s) {
+  return String(s ?? "")
+    .normalize("NFKC")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s\u3000]+/g, "")
+    .replace(/[.,!?;:·…'"「」『』()（）\[\]|\\/@#%^&*+=<>{}~`]/g, "");
+}
+
+function enKeyWords(expectedRaw) {
+  const raw =
+    String(expectedRaw ?? "")
+      .toLowerCase()
+      .match(/[a-z]{4,}/g) || [];
+  const stop = new Set([
+    "that",
+    "this",
+    "with",
+    "from",
+    "have",
+    "been",
+    "will",
+    "your",
+    "what",
+    "when",
+    "where",
+    "which",
+    "their",
+    "there",
+    "would",
+    "could",
+    "should",
+    "about",
+    "after",
+    "before",
+    "because",
+    "while",
+    "those",
+    "these",
+    "other",
+    "into",
+    "than",
+    "then",
+    "them",
+    "some",
+    "very",
+    "just",
+    "also",
+    "only",
+    "even",
+    "much",
+    "such",
+    "here",
+    "more",
+    "most",
+  ]);
+  return [...new Set(raw.filter((w) => !stop.has(w)))];
+}
+
+/** 日→英・英文モード用。単語モードの英訳は evaluateAnswer 側で厳密一致。 */
+function enSentenceAnswerGrade(userRaw, expectedRaw) {
+  const u = stripEnCompare(userRaw);
+  const exp = stripEnCompare(expectedRaw);
+  if (!u || !exp) return null;
+  if (u === exp) return "exact";
+
+  const uLoose = normalizeEnglishAnswerForMatch(userRaw);
+  const expLoose = normalizeEnglishAnswerForMatch(expectedRaw);
+  if (uLoose && expLoose && uLoose === expLoose) return "exact";
+
+  if (u.includes(exp) || exp.includes(u)) return "close";
+
+  const words = enKeyWords(expectedRaw);
+  if (words.length >= 1) {
+    let hit = 0;
+    for (const w of words) {
+      if (u.includes(w)) hit++;
+    }
+    const need = Math.max(1, Math.ceil(words.length * 0.5));
+    if (hit >= need) return "close";
+  }
+
+  const mx = Math.max(u.length, exp.length);
+  if (mx <= 1) return u === exp ? "exact" : null;
+  const ratio = 1 - levenshtein(u, exp) / mx;
+  if (ratio >= 0.64) return "close";
+  return null;
+}
+
 /** 日本語正解判定用（句読点・空白を除く） */
 function stripJPCompare(s) {
   return String(s ?? "")
@@ -580,6 +670,18 @@ function evaluateAnswer(user, expected, isEnExpected) {
   if (!targets.some(Boolean)) return { ok: false, grade: "wrong" };
 
   if (isEnExpected) {
+    if (studyMode === "sentence") {
+      const uRaw = String(user ?? "").trim();
+      if (!uRaw) return { ok: false, grade: "wrong" };
+      let hasClose = false;
+      for (const t of targets) {
+        const g = enSentenceAnswerGrade(uRaw, t);
+        if (g === "exact") return { ok: true, grade: "exact" };
+        if (g === "close") hasClose = true;
+      }
+      if (hasClose) return { ok: true, grade: "close" };
+      return { ok: false, grade: "wrong" };
+    }
     const u = normalizeEnglishAnswerForMatch(user);
     if (!u) return { ok: false, grade: "wrong" };
     const hit = targets.some((t) => {
@@ -686,6 +788,10 @@ const wrongEnJa = new Set();
 /** @type {Set<number>} */
 const wrongJaEn = new Set();
 
+/** 「次の問題」押下まで保留する採点結果 */
+let pendingAdvance =
+  /** @type {null | { uid: number, ok: boolean, flow: "main_en" | "remed_en" | "main_ja" | "remed_ja" }} */ (null);
+
 /** カレンダー表示中の年・月（月は 0–11）。過去・未来を閲覧する */
 let calendarViewYear = new Date().getFullYear();
 let calendarViewMonth = new Date().getMonth();
@@ -700,7 +806,9 @@ const elCardHint = $("#cardHint");
 const elAnswer = $("#answerInput");
 const elFeedback = $("#feedback");
 const elFeedbackMain = $("#feedbackMain");
-const elFeedbackYour = $("#feedbackYour");
+const elFeedbackModel = $("#feedbackModel");
+const elBtnSubmit = $("#btnSubmit");
+const elBtnNext = $("#btnNextQuestion");
 const elPhaseBadge = $("#phaseBadge");
 const elSessionMeta = $("#sessionMeta");
 const elProgressDots = $("#progressDots");
@@ -793,14 +901,39 @@ function flashCard() {
   elCard.classList.add("is-flip");
 }
 
+function resetQuestionChrome() {
+  elBtnSubmit.disabled = false;
+  elBtnNext.classList.add("hidden");
+}
+
+function flushPendingAdvance() {
+  if (!pendingAdvance) return;
+  const { uid, ok, flow: fl } = pendingAdvance;
+  pendingAdvance = null;
+  elFeedback.classList.add("hidden");
+  elFeedbackModel.textContent = "";
+  elFeedbackModel.classList.add("hidden");
+  elBtnSubmit.disabled = false;
+  elBtnNext.classList.add("hidden");
+  if (fl === "main_en") advanceAfterMainEn(uid, ok);
+  else if (fl === "remed_en") advanceRemedEn(uid, ok);
+  else if (fl === "main_ja") advanceMainJa(uid, ok);
+  else if (fl === "remed_ja") advanceRemedJa(uid, ok);
+}
+
 /**
  * @param {{ focusInput?: boolean }} [opts] バックグラウンド復帰時の再読込などでは false（IMEが勝手にかなになるのを防ぐ）
  */
 function showCurrent(opts = {}) {
+  if (pendingAdvance) return;
+
   const shouldFocus = opts.focusInput !== false;
 
+  resetQuestionChrome();
   elFeedback.classList.add("hidden");
-  elFeedback.classList.remove("ok", "ok-soft", "bad");
+  elFeedback.classList.remove("ok", "bad");
+  elFeedbackModel.textContent = "";
+  elFeedbackModel.classList.add("hidden");
   elAnswer.value = "";
   elCardHint.hidden = true;
   $("#btnShowHint").disabled = true;
@@ -1011,6 +1144,7 @@ function startSession() {
 
 function onSubmitAnswer(e) {
   e.preventDefault();
+  if (pendingAdvance) return;
   if (flow === "idle") {
     if (entries.length) startSession();
     return;
@@ -1024,36 +1158,41 @@ function onSubmitAnswer(e) {
         : null;
   if (uid == null) return;
 
+  const fl =
+    flow === "main_en" || flow === "remed_en" || flow === "main_ja" || flow === "remed_ja"
+      ? flow
+      : null;
+  if (!fl) return;
+
   const entry = entries[uid];
   const pe = getPromptExpectedHint(entry);
-  const userLine = String(elAnswer.value).trim();
   const { ok, grade } = evaluateAnswer(elAnswer.value, pe.a, pe.expectEn);
 
-  elFeedback.classList.remove("hidden", "ok", "ok-soft", "bad");
+  elFeedback.classList.remove("hidden", "ok", "bad");
+  elFeedbackModel.textContent = "";
+  elFeedbackModel.classList.add("hidden");
   if (!ok) {
     elFeedback.classList.add("bad");
     elFeedbackMain.textContent = `不正解… 正: ${pe.a}`;
-  } else if (grade === "exact") {
+  } else {
     elFeedback.classList.add("ok");
     elFeedbackMain.textContent = "正解！";
-  } else {
-    elFeedback.classList.add("ok-soft");
-    elFeedbackMain.textContent = "正解（表現がデータと完全一致ではありません）";
+    if (grade === "close") {
+      elFeedbackModel.textContent = `データの表記: ${pe.a}`;
+      elFeedbackModel.classList.remove("hidden");
+    }
   }
-  elFeedbackYour.textContent = `あなたの回答: ${userLine || "（空）"}`;
 
   afterAnswer(ok);
 
-  const advanceMs = !ok ? 900 + 5000 : grade === "close" ? 900 : 420;
-  window.setTimeout(() => {
-    if (flow === "main_en") advanceAfterMainEn(uid, ok);
-    else if (flow === "remed_en") advanceRemedEn(uid, ok);
-    else if (flow === "main_ja") advanceMainJa(uid, ok);
-    else if (flow === "remed_ja") advanceRemedJa(uid, ok);
-  }, advanceMs);
+  pendingAdvance = { uid, ok, flow: fl };
+  elBtnSubmit.disabled = true;
+  elBtnNext.classList.remove("hidden");
+  elBtnNext.focus();
 }
 
 $("#answerForm").addEventListener("submit", onSubmitAnswer);
+$("#btnNextQuestion").addEventListener("click", () => flushPendingAdvance());
 
 $("#btnShowHint").addEventListener("click", (ev) => {
   ev.preventDefault();
@@ -1072,6 +1211,7 @@ $("#btnShowHint").addEventListener("click", (ev) => {
 });
 
 $("#btnModeWord").addEventListener("click", () => {
+  if (pendingAdvance) flushPendingAdvance();
   studyMode = "word";
   $("#btnModeWord").classList.add("active");
   $("#btnModeSentence").classList.remove("active");
@@ -1082,6 +1222,7 @@ $("#btnModeWord").addEventListener("click", () => {
 });
 
 $("#btnModeSentence").addEventListener("click", () => {
+  if (pendingAdvance) flushPendingAdvance();
   studyMode = "sentence";
   $("#btnModeSentence").classList.add("active");
   $("#btnModeWord").classList.remove("active");
@@ -1210,7 +1351,7 @@ async function loadData(opts = {}) {
       entries = [];
       persist = loadPersisted();
       await syncPullMerge();
-      showCurrent();
+      if (!pendingAdvance) showCurrent();
       renderCalendar();
       toast(
         "シートを取得できませんでした。共有は「リンクを知っている全員が閲覧可」にしてください。"
@@ -1225,7 +1366,7 @@ async function loadData(opts = {}) {
   await syncPullMerge();
   elXpVal.textContent = xpDisplay(persist.meta.xp);
   elStreakVal.textContent = String(consecutiveStreak(persist.habit, todayYMD()));
-  showCurrent({ focusInput: !silent });
+  if (!pendingAdvance) showCurrent({ focusInput: !silent });
   renderCalendar();
   if (!silent) toast(`読み込み ${entries.length} 件（${sourceLabel}）`);
 }
@@ -1309,6 +1450,7 @@ function exportHabitCsv() {
 }
 
 function applyImportedPersist(/** @type {{ srs?: object, habit?: object, meta?: object }} */ data) {
+  if (pendingAdvance) flushPendingAdvance();
   persist = {
     srs: data.srs || {},
     habit: data.habit || {},
@@ -1344,6 +1486,7 @@ $("#btnTestSync").addEventListener("click", () => {
 });
 
 $("#btnSaveSync").addEventListener("click", async () => {
+  if (pendingAdvance) flushPendingAdvance();
   const url = sanitizeSupabaseUrl($("#supabaseUrlInput").value);
   const key = sanitizeSupabaseKey($("#supabaseKeyInput").value);
   localStorage.setItem(LS_SYNC_URL, url);
