@@ -592,6 +592,24 @@ function stripJPCompare(s) {
     .replace(/[。、，．・，､｡,!！?？'"「」『』()（）\[\]]/g, "");
 }
 
+/**
+ * 日本語採点前の正規化（敬体↔常体・軽い助詞ゆれ）。「いる／います」差で類似度が落ちすぎないようにする。
+ */
+function jpNormalizeForGrade(raw) {
+  let t = stripJPCompare(raw);
+  t = t.replace(/であります/g, "である");
+  t = t.replace(/ませんでした/g, "なかった");
+  t = t.replace(/いません/g, "いない");
+  t = t.replace(/います/g, "いる");
+  t = t.replace(/ありません/g, "ない");
+  t = t.replace(/あります/g, "ある");
+  t = t.replace(/でした/g, "だった");
+  t = t.replace(/ません/g, "ない");
+  t = t.replace(/でしょう/g, "だろう");
+  t = t.replace(/には/g, "は");
+  return t;
+}
+
 /** 重要語: 漢字2文字以上 / かな・カナ3文字以上（汎用助動詞っぽいものは除外） */
 function jpKeyChunks(expectedStripped) {
   const s = expectedStripped;
@@ -633,10 +651,8 @@ function levenshtein(a, b) {
   return dp[n];
 }
 
-/** @param {string} userRaw @param {string} expectedRaw @returns {'exact'|'close'|null} */
-function jpAnswerGrade(userRaw, expectedRaw) {
-  const u = stripJPCompare(userRaw);
-  const exp = stripJPCompare(expectedRaw);
+/** @param {string} u @param {string} exp すでに jpNormalizeForGrade 等で揃えた文字列 */
+function jpAnswerGradeStripped(u, exp) {
   if (!u || !exp) return null;
   if (u === exp) return "exact";
   if (u.includes(exp) || exp.includes(u)) return "close";
@@ -658,13 +674,20 @@ function jpAnswerGrade(userRaw, expectedRaw) {
   return null;
 }
 
+/** @param {string} userRaw @param {string} expectedRaw @returns {'exact'|'close'|null} */
+function jpAnswerGrade(userRaw, expectedRaw) {
+  const loose = jpAnswerGradeStripped(jpNormalizeForGrade(userRaw), jpNormalizeForGrade(expectedRaw));
+  if (loose) return loose;
+  return jpAnswerGradeStripped(stripJPCompare(userRaw), stripJPCompare(expectedRaw));
+}
+
 /**
  * 日本語のみ: 表記は違うが模範の重要語を十分含み、全体の類似度も十分 → 緑（exact）に寄せる
  * （例: 「普段の運動は…」「定期的な運動は…」）
  */
 function jpMeaningMatchAsExact(userRaw, expectedRaw) {
-  const u = stripJPCompare(userRaw);
-  const exp = stripJPCompare(expectedRaw);
+  const u = jpNormalizeForGrade(userRaw);
+  const exp = jpNormalizeForGrade(expectedRaw);
   if (!u || !exp) return false;
   const chunks = jpKeyChunks(exp);
   if (!chunks.length) return false;
