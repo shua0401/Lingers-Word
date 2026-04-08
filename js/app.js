@@ -633,8 +633,14 @@ function levenshtein(a, b) {
   return dp[n];
 }
 
-/** @param {string} userRaw @param {string} expectedRaw @returns {'exact'|'close'|null} */
-function jpAnswerGrade(userRaw, expectedRaw) {
+/**
+ * @param {string} userRaw
+ * @param {string} expectedRaw
+ * @param {{ sentenceRelaxed?: boolean }} [opts] 文モードは重要語＋類似度8割で合格しやすく
+ * @returns {'exact'|'close'|null}
+ */
+function jpAnswerGrade(userRaw, expectedRaw, opts) {
+  const relaxed = !!opts?.sentenceRelaxed;
   const u = stripJPCompare(userRaw);
   const exp = stripJPCompare(expectedRaw);
   if (!u || !exp) return null;
@@ -642,19 +648,25 @@ function jpAnswerGrade(userRaw, expectedRaw) {
   if (u.includes(exp) || exp.includes(u)) return "close";
 
   const chunks = jpKeyChunks(exp);
+  let chunkHit = 0;
   if (chunks.length >= 1) {
-    let hit = 0;
     for (const c of chunks) {
-      if (u.includes(c)) hit++;
+      if (u.includes(c)) chunkHit++;
     }
     const need = Math.max(1, Math.ceil(chunks.length * 0.5));
-    if (hit >= need) return "close";
+    if (chunkHit >= need && relaxed) {
+      const mx = Math.max(u.length, exp.length);
+      const ratio = mx <= 1 ? (u === exp ? 1 : 0) : 1 - levenshtein(u, exp) / mx;
+      if (ratio >= 0.8) return "exact";
+      if (ratio >= 0.72) return "close";
+    }
+    if (chunkHit >= need) return "close";
   }
 
   const mx = Math.max(u.length, exp.length);
   if (mx <= 1) return u === exp ? "exact" : null;
   const ratio = 1 - levenshtein(u, exp) / mx;
-  if (ratio >= 0.64) return "close";
+  if (ratio >= (relaxed ? 0.72 : 0.64)) return "close";
   return null;
 }
 
@@ -683,6 +695,29 @@ function sentenceHasKeyJapanese(userRaw, wordJa) {
   const us = stripJPCompare(userRaw);
   if (!ws) return true;
   return us.includes(ws);
+}
+
+/**
+ * 英文モード・英→日: 単語列が本文とずれていても、模範訳の「重要語」が拾えていれば通過。
+ * （単語列が空／英語のまま等で旧ゲートだけだと、句読点以外まで一致していても落ちるのを防ぐ）
+ */
+function sentenceAllowsJapaneseKeywords(userRaw, wordJa, targets) {
+  const us = stripJPCompare(userRaw);
+  if (!us) return false;
+  if (sentenceHasKeyJapanese(userRaw, wordJa)) return true;
+  for (const t of targets) {
+    const exp = stripJPCompare(t);
+    if (!exp) continue;
+    const chunks = jpKeyChunks(exp);
+    if (!chunks.length) return true;
+    let hit = 0;
+    for (const c of chunks) {
+      if (us.includes(c)) hit++;
+    }
+    const need = Math.max(1, Math.ceil(chunks.length * 0.5));
+    if (hit >= need) return true;
+  }
+  return false;
 }
 
 /**
@@ -733,11 +768,19 @@ function evaluateAnswer(user, expected, isEnExpected, entry) {
 
   const uRaw = String(user ?? "").trim();
   if (!uRaw) return { grade: "wrong" };
-  if (studyMode === "sentence" && !sentenceHasKeyJapanese(uRaw, entry?.wordJa)) return { grade: "wrong" };
 
+  for (const t of targets) {
+    if (stripJPCompare(uRaw) === stripJPCompare(t)) return { grade: "exact" };
+  }
+
+  if (studyMode === "sentence" && !sentenceAllowsJapaneseKeywords(uRaw, entry?.wordJa, targets)) {
+    return { grade: "wrong" };
+  }
+
+  const relaxed = studyMode === "sentence";
   let hasClose = false;
   for (const t of targets) {
-    const g = jpAnswerGrade(uRaw, t);
+    const g = jpAnswerGrade(uRaw, t, { sentenceRelaxed: relaxed });
     if (g === "exact") return { grade: "exact" };
     if (g === "close") hasClose = true;
   }
