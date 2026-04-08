@@ -659,6 +659,28 @@ function jpAnswerGrade(userRaw, expectedRaw) {
 }
 
 /**
+ * 日本語のみ: 表記は違うが模範の重要語を十分含み、全体の類似度も十分 → 緑（exact）に寄せる
+ * （例: 「普段の運動は…」「定期的な運動は…」）
+ */
+function jpMeaningMatchAsExact(userRaw, expectedRaw) {
+  const u = stripJPCompare(userRaw);
+  const exp = stripJPCompare(expectedRaw);
+  if (!u || !exp) return false;
+  const chunks = jpKeyChunks(exp);
+  if (!chunks.length) return false;
+  let hit = 0;
+  for (const c of chunks) {
+    if (u.includes(c)) hit++;
+  }
+  const need = Math.max(1, Math.ceil(chunks.length * 0.65));
+  if (hit < need) return false;
+  const mx = Math.max(u.length, exp.length);
+  if (mx <= 1) return u === exp;
+  const ratio = 1 - levenshtein(u, exp) / mx;
+  return ratio >= 0.38;
+}
+
+/**
  * @returns {{ ok: boolean, grade: 'exact' | 'close' | 'wrong' }}
  */
 function evaluateAnswer(user, expected, isEnExpected) {
@@ -706,6 +728,7 @@ function evaluateAnswer(user, expected, isEnExpected) {
   for (const t of targets) {
     const g = jpAnswerGrade(uRaw, t);
     if (g === "exact") return { ok: true, grade: "exact" };
+    if (g === "close" && jpMeaningMatchAsExact(uRaw, t)) return { ok: true, grade: "exact" };
     if (g === "close") hasClose = true;
   }
   if (hasClose) return { ok: true, grade: "close" };
