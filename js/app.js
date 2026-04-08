@@ -633,10 +633,23 @@ function levenshtein(a, b) {
   return dp[n];
 }
 
+/** 模範文の連続部分（最低 minLen 文字）が回答に含まれるか — 「在庫を確認する」等を拾う */
+function hasJpPhraseOverlap(userStripped, expStripped, minLen) {
+  const n = expStripped.length;
+  if (!userStripped || !expStripped || n < minLen) return false;
+  const maxL = Math.min(24, n);
+  for (let L = maxL; L >= minLen; L--) {
+    for (let i = 0; i + L <= n; i++) {
+      if (userStripped.includes(expStripped.slice(i, i + L))) return true;
+    }
+  }
+  return false;
+}
+
 /**
  * @param {string} userRaw
  * @param {string} expectedRaw
- * @param {{ sentenceRelaxed?: boolean }} [opts] 文モードは重要語＋類似度8割で合格しやすく
+ * @param {{ sentenceRelaxed?: boolean }} [opts] 文モードは重要語＋類似度で寛容
  * @returns {'exact'|'close'|null}
  */
 function jpAnswerGrade(userRaw, expectedRaw, opts) {
@@ -647,18 +660,22 @@ function jpAnswerGrade(userRaw, expectedRaw, opts) {
   if (u === exp) return "exact";
   if (u.includes(exp) || exp.includes(u)) return "close";
 
+  const phraseMin = relaxed ? 5 : 6;
+  const sharedLong = hasJpPhraseOverlap(u, exp, phraseMin);
+
   const chunks = jpKeyChunks(exp);
   let chunkHit = 0;
   if (chunks.length >= 1) {
     for (const c of chunks) {
       if (u.includes(c)) chunkHit++;
     }
-    const need = Math.max(1, Math.ceil(chunks.length * 0.5));
+    const need = Math.max(1, Math.ceil(chunks.length * (relaxed ? 0.34 : 0.5)));
     if (chunkHit >= need && relaxed) {
       const mx = Math.max(u.length, exp.length);
       const ratio = mx <= 1 ? (u === exp ? 1 : 0) : 1 - levenshtein(u, exp) / mx;
-      if (ratio >= 0.8) return "exact";
-      if (ratio >= 0.72) return "close";
+      if (ratio >= 0.88) return "exact";
+      if (ratio >= 0.55 || sharedLong) return "close";
+      if (chunkHit >= Math.ceil(chunks.length * 0.65)) return "close";
     }
     if (chunkHit >= need) return "close";
   }
@@ -666,7 +683,12 @@ function jpAnswerGrade(userRaw, expectedRaw, opts) {
   const mx = Math.max(u.length, exp.length);
   if (mx <= 1) return u === exp ? "exact" : null;
   const ratio = 1 - levenshtein(u, exp) / mx;
-  if (ratio >= (relaxed ? 0.72 : 0.64)) return "close";
+  if (relaxed) {
+    if (sharedLong && ratio >= 0.38) return "close";
+    if (ratio >= 0.46) return "close";
+    return null;
+  }
+  if (ratio >= 0.64) return "close";
   return null;
 }
 
@@ -714,8 +736,12 @@ function sentenceAllowsJapaneseKeywords(userRaw, wordJa, targets) {
     for (const c of chunks) {
       if (us.includes(c)) hit++;
     }
-    const need = Math.max(1, Math.ceil(chunks.length * 0.5));
+    const need = Math.max(1, Math.ceil(chunks.length * 0.34));
     if (hit >= need) return true;
+    if (hasJpPhraseOverlap(us, exp, 5)) return true;
+    const mx = Math.max(us.length, exp.length);
+    const ratio = mx <= 1 ? 0 : 1 - levenshtein(us, exp) / mx;
+    if (ratio >= 0.42) return true;
   }
   return false;
 }
