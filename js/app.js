@@ -633,185 +633,83 @@ function levenshtein(a, b) {
   return dp[n];
 }
 
-/** 模範文の連続部分（最低 minLen 文字）が回答に含まれるか — 「在庫を確認する」等を拾う */
-function hasJpPhraseOverlap(userStripped, expStripped, minLen) {
-  const n = expStripped.length;
-  if (!userStripped || !expStripped || n < minLen) return false;
-  const maxL = Math.min(24, n);
-  for (let L = maxL; L >= minLen; L--) {
-    for (let i = 0; i + L <= n; i++) {
-      if (userStripped.includes(expStripped.slice(i, i + L))) return true;
-    }
-  }
-  return false;
-}
-
-/**
- * @param {string} userRaw
- * @param {string} expectedRaw
- * @param {{ sentenceRelaxed?: boolean }} [opts] 文モードは重要語＋類似度で寛容
- * @returns {'exact'|'close'|null}
- */
-function jpAnswerGrade(userRaw, expectedRaw, opts) {
-  const relaxed = !!opts?.sentenceRelaxed;
+/** @param {string} userRaw @param {string} expectedRaw @returns {'exact'|'close'|null} */
+function jpAnswerGrade(userRaw, expectedRaw) {
   const u = stripJPCompare(userRaw);
   const exp = stripJPCompare(expectedRaw);
   if (!u || !exp) return null;
   if (u === exp) return "exact";
   if (u.includes(exp) || exp.includes(u)) return "close";
 
-  const phraseMin = relaxed ? 5 : 6;
-  const sharedLong = hasJpPhraseOverlap(u, exp, phraseMin);
-
   const chunks = jpKeyChunks(exp);
-  let chunkHit = 0;
   if (chunks.length >= 1) {
+    let hit = 0;
     for (const c of chunks) {
-      if (u.includes(c)) chunkHit++;
+      if (u.includes(c)) hit++;
     }
-    const need = Math.max(1, Math.ceil(chunks.length * (relaxed ? 0.34 : 0.5)));
-    if (chunkHit >= need && relaxed) {
-      const mx = Math.max(u.length, exp.length);
-      const ratio = mx <= 1 ? (u === exp ? 1 : 0) : 1 - levenshtein(u, exp) / mx;
-      if (ratio >= 0.88) return "exact";
-      if (ratio >= 0.55 || sharedLong) return "close";
-      if (chunkHit >= Math.ceil(chunks.length * 0.65)) return "close";
-    }
-    if (chunkHit >= need) return "close";
+    const need = Math.max(1, Math.ceil(chunks.length * 0.5));
+    if (hit >= need) return "close";
   }
 
   const mx = Math.max(u.length, exp.length);
   if (mx <= 1) return u === exp ? "exact" : null;
   const ratio = 1 - levenshtein(u, exp) / mx;
-  if (relaxed) {
-    if (sharedLong && ratio >= 0.38) return "close";
-    if (ratio >= 0.46) return "close";
-    return null;
-  }
   if (ratio >= 0.64) return "close";
   return null;
 }
 
-/** 英単語トークン（省みない・語形はそのまま一致が必要） */
-function englishTokens(s) {
-  return String(s)
-    .toLowerCase()
-    .match(/[a-z]+(?:'[a-z]+)?/g) || [];
-}
-
-/** 日→英: 回答に英単語マスタの語が「トークン一致」で含まれるか（語形違いは不可） */
-function sentenceHasKeyEnglishWord(userRaw, wordEn) {
-  const w = String(wordEn ?? "").trim();
-  if (!w) return true;
-  const need = englishTokens(w);
-  if (!need.length) return true;
-  const have = new Set(englishTokens(userRaw));
-  return need.every((t) => have.has(t));
-}
-
-/** 英→日: 回答に単語マスタの日本語が含まれるか */
-function sentenceHasKeyJapanese(userRaw, wordJa) {
-  const w = String(wordJa ?? "").trim();
-  if (!w) return true;
-  const ws = stripJPCompare(w);
-  const us = stripJPCompare(userRaw);
-  if (!ws) return true;
-  return us.includes(ws);
-}
-
 /**
- * 英文モード・英→日: 単語列が本文とずれていても、模範訳の「重要語」が拾えていれば通過。
- * （単語列が空／英語のまま等で旧ゲートだけだと、句読点以外まで一致していても落ちるのを防ぐ）
+ * @returns {{ ok: boolean, grade: 'exact' | 'close' | 'wrong' }}
  */
-function sentenceAllowsJapaneseKeywords(userRaw, wordJa, targets) {
-  const us = stripJPCompare(userRaw);
-  if (!us) return false;
-  if (sentenceHasKeyJapanese(userRaw, wordJa)) return true;
-  for (const t of targets) {
-    const exp = stripJPCompare(t);
-    if (!exp) continue;
-    const chunks = jpKeyChunks(exp);
-    if (!chunks.length) return true;
-    let hit = 0;
-    for (const c of chunks) {
-      if (us.includes(c)) hit++;
-    }
-    const need = Math.max(1, Math.ceil(chunks.length * 0.34));
-    if (hit >= need) return true;
-    if (hasJpPhraseOverlap(us, exp, 5)) return true;
-    const mx = Math.max(us.length, exp.length);
-    const ratio = mx <= 1 ? 0 : 1 - levenshtein(us, exp) / mx;
-    if (ratio >= 0.42) return true;
-  }
-  return false;
-}
-
-/**
- * @param {unknown} entry rows の1行
- * @returns {{ grade: 'exact' | 'close' | 'wrong' }}
- */
-function evaluateAnswer(user, expected, isEnExpected, entry) {
+function evaluateAnswer(user, expected, isEnExpected) {
   const parts = String(expected)
     .split(/[／\/|｜]/g)
     .map((p) => String(p).trim())
     .filter(Boolean);
   const targets = parts.length ? parts : [String(expected).trim()];
-  if (!targets.some(Boolean)) return { grade: "wrong" };
+  if (!targets.some(Boolean)) return { ok: false, grade: "wrong" };
 
   if (isEnExpected) {
     if (studyMode === "sentence") {
       const uRaw = String(user ?? "").trim();
-      if (!uRaw) return { grade: "wrong" };
-      if (!sentenceHasKeyEnglishWord(uRaw, entry?.wordEn)) return { grade: "wrong" };
-      let best = /** @type {'exact'|'close'|'wrong'} */ ("wrong");
+      if (!uRaw) return { ok: false, grade: "wrong" };
+      let hasClose = false;
       for (const t of targets) {
-        const su = stripEnCompare(userRaw);
-        const st = stripEnCompare(t);
-        if (su && st && su === st) return { grade: "exact" };
         const g = enSentenceAnswerGrade(uRaw, t);
-        if (g === "exact") return { grade: "exact" };
-        if (g === "close") best = "close";
+        if (g === "exact") return { ok: true, grade: "exact" };
+        if (g === "close") hasClose = true;
       }
-      if (best === "close") return { grade: "close" };
-      return { grade: "wrong" };
+      if (hasClose) return { ok: true, grade: "close" };
+      return { ok: false, grade: "wrong" };
     }
     const u = normalizeEnglishAnswerForMatch(user);
-    if (!u) return { grade: "wrong" };
+    if (!u) return { ok: false, grade: "wrong" };
     const hit = targets.some((t) => {
       const tn = normalizeEnglishAnswerForMatch(t);
       return !!tn && u === tn;
     });
-    if (hit) return { grade: "exact" };
+    if (hit) return { ok: true, grade: "exact" };
     const uRaw = String(user ?? "").trim();
     let hasClose = false;
     for (const t of targets) {
       const g = enSentenceAnswerGrade(uRaw, t);
       if (g === "close") hasClose = true;
     }
-    if (hasClose) return { grade: "close" };
-    return { grade: "wrong" };
+    if (hasClose) return { ok: true, grade: "close" };
+    return { ok: false, grade: "wrong" };
   }
 
   const uRaw = String(user ?? "").trim();
-  if (!uRaw) return { grade: "wrong" };
+  if (!uRaw) return { ok: false, grade: "wrong" };
 
-  for (const t of targets) {
-    if (stripJPCompare(uRaw) === stripJPCompare(t)) return { grade: "exact" };
-  }
-
-  if (studyMode === "sentence" && !sentenceAllowsJapaneseKeywords(uRaw, entry?.wordJa, targets)) {
-    return { grade: "wrong" };
-  }
-
-  const relaxed = studyMode === "sentence";
   let hasClose = false;
   for (const t of targets) {
-    const g = jpAnswerGrade(uRaw, t, { sentenceRelaxed: relaxed });
-    if (g === "exact") return { grade: "exact" };
+    const g = jpAnswerGrade(uRaw, t);
+    if (g === "exact") return { ok: true, grade: "exact" };
     if (g === "close") hasClose = true;
   }
-  if (hasClose) return { grade: "close" };
-  return { grade: "wrong" };
+  if (hasClose) return { ok: true, grade: "close" };
+  return { ok: false, grade: "wrong" };
 }
 
 function srsSlot(mode, dir) {
@@ -910,9 +808,7 @@ const wrongJaEn = new Set();
 
 /** 「次の問題」押下まで保留する採点結果 */
 let pendingAdvance =
-  /** @type {null | { uid: number, grade: "exact" | "close" | "wrong", flow: "main_en" | "remed_en" | "main_ja" | "remed_ja" }} */ (
-    null
-  );
+  /** @type {null | { uid: number, ok: boolean, flow: "main_en" | "remed_en" | "main_ja" | "remed_ja" }} */ (null);
 
 /** カレンダー表示中の年・月（月は 0–11）。過去・未来を閲覧する */
 let calendarViewYear = new Date().getFullYear();
@@ -1030,17 +926,17 @@ function resetQuestionChrome() {
 
 function flushPendingAdvance() {
   if (!pendingAdvance) return;
-  const { uid, grade, flow: fl } = pendingAdvance;
+  const { uid, ok, flow: fl } = pendingAdvance;
   pendingAdvance = null;
   elFeedback.classList.add("hidden");
   elFeedbackModel.textContent = "";
   elFeedbackModel.classList.add("hidden");
   elBtnSubmit.disabled = false;
   elBtnNext.classList.add("hidden");
-  if (fl === "main_en") advanceAfterMainEn(uid, grade);
-  else if (fl === "remed_en") advanceRemedEn(uid, grade);
-  else if (fl === "main_ja") advanceMainJa(uid, grade);
-  else if (fl === "remed_ja") advanceRemedJa(uid, grade);
+  if (fl === "main_en") advanceAfterMainEn(uid, ok);
+  else if (fl === "remed_en") advanceRemedEn(uid, ok);
+  else if (fl === "main_ja") advanceMainJa(uid, ok);
+  else if (fl === "remed_ja") advanceRemedJa(uid, ok);
 }
 
 /**
@@ -1143,25 +1039,18 @@ function applySrs(id, quality) {
   savePersisted(persist);
 }
 
-function afterAnswerGrade(/** @type {'exact'|'close'|'wrong'} */ grade) {
-  if (grade === "exact") {
-    bumpHabitAndMaybeCelebrate();
-    addXp(8);
-  } else if (grade === "close") {
-    addXp(4);
-  } else {
-    addXp(1);
-  }
+function afterAnswer(correct) {
+  bumpHabitAndMaybeCelebrate();
+  if (correct) addXp(8);
+  else addXp(1);
 }
 
-function advanceAfterMainEn(/** @type {number} */ id, /** @type {'exact'|'close'|'wrong'} */ grade) {
-  if (grade === "wrong") {
+function advanceAfterMainEn(/** @type {number} */ id, correct) {
+  if (correct) {
+    applySrs(id, 4);
+  } else {
     applySrs(id, 1);
     wrongEnJa.add(id);
-  } else if (grade === "close") {
-    applySrs(id, 3);
-  } else {
-    applySrs(id, 4);
   }
   mainCursor++;
   if (mainCursor < sessionIds.length) {
@@ -1187,19 +1076,8 @@ function startJaPhase() {
   showCurrent();
 }
 
-function advanceRemedEn(id, grade) {
-  if (grade === "wrong") {
-    applySrs(id, 1);
-  } else if (grade === "close") {
-    applySrs(id, 3);
-    wrongEnJa.delete(id);
-    if (!wrongEnJa.size) {
-      remedId = null;
-      startJaPhase();
-      return;
-    }
-    remedId = wrongEnJa.values().next().value;
-  } else {
+function advanceRemedEn(id, correct) {
+  if (correct) {
     applySrs(id, 4);
     wrongEnJa.delete(id);
     if (!wrongEnJa.size) {
@@ -1208,18 +1086,18 @@ function advanceRemedEn(id, grade) {
       return;
     }
     remedId = wrongEnJa.values().next().value;
+  } else {
+    applySrs(id, 1);
   }
   showCurrent();
 }
 
-function advanceMainJa(id, grade) {
-  if (grade === "wrong") {
+function advanceMainJa(id, correct) {
+  if (correct) {
+    applySrs(id, 4);
+  } else {
     applySrs(id, 1);
     wrongJaEn.add(id);
-  } else if (grade === "close") {
-    applySrs(id, 3);
-  } else {
-    applySrs(id, 4);
   }
   mainCursor++;
   if (mainCursor < sessionIds.length) {
@@ -1238,22 +1116,8 @@ function advanceMainJa(id, grade) {
   showCurrent();
 }
 
-function advanceRemedJa(id, grade) {
-  if (grade === "wrong") {
-    applySrs(id, 1);
-  } else if (grade === "close") {
-    applySrs(id, 3);
-    wrongJaEn.delete(id);
-    if (!wrongJaEn.size) {
-      remedId = null;
-      flow = "idle";
-      direction = "en_ja";
-      toast("日→英もクリア。完璧です！");
-      showCurrent();
-      return;
-    }
-    remedId = wrongJaEn.values().next().value;
-  } else {
+function advanceRemedJa(id, correct) {
+  if (correct) {
     applySrs(id, 4);
     wrongJaEn.delete(id);
     if (!wrongJaEn.size) {
@@ -1265,6 +1129,8 @@ function advanceRemedJa(id, grade) {
       return;
     }
     remedId = wrongJaEn.values().next().value;
+  } else {
+    applySrs(id, 1);
   }
   showCurrent();
 }
@@ -1317,14 +1183,13 @@ function onSubmitAnswer(e) {
       : null;
   if (!fl) return;
 
-  const entry = entries[uid];
-  const pe = getPromptExpectedHint(entry);
-  const { grade } = evaluateAnswer(elAnswer.value, pe.a, pe.expectEn, entry);
+  const pe = getPromptExpectedHint(entries[uid]);
+  const { ok, grade } = evaluateAnswer(elAnswer.value, pe.a, pe.expectEn);
 
   elFeedback.classList.remove("hidden", "ok", "ok-soft", "bad");
   elFeedbackModel.textContent = "";
   elFeedbackModel.classList.add("hidden");
-  if (grade === "wrong") {
+  if (!ok) {
     elFeedback.classList.add("bad");
     elFeedbackMain.textContent = `不正解… 正: ${pe.a}`;
   } else if (grade === "exact") {
@@ -1332,14 +1197,14 @@ function onSubmitAnswer(e) {
     elFeedbackMain.textContent = "正解！";
   } else {
     elFeedback.classList.add("ok-soft");
-    elFeedbackMain.textContent = "正解（スペル・表記のゆれあり。完全一致は緑のみ）";
+    elFeedbackMain.textContent = "正解（表現がデータと完全一致ではありません）";
     elFeedbackModel.textContent = `データの表記: ${pe.a}`;
     elFeedbackModel.classList.remove("hidden");
   }
 
-  afterAnswerGrade(grade);
+  afterAnswer(ok);
 
-  pendingAdvance = { uid, grade, flow: fl };
+  pendingAdvance = { uid, ok, flow: fl };
   elBtnSubmit.disabled = true;
   elBtnNext.classList.remove("hidden");
   elBtnNext.focus();
